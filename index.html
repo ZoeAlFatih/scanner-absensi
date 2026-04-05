@@ -101,7 +101,7 @@
 
 <script>
   // ⬇️ GANTI 2 BARIS INI
-  var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdP974-8uRf0x550hsa_3G7yobtxxFDwcv35k3qE8tUwip8mUBLMAf5ME6qr5wa59n/exec?mode=scanner";
+  var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdP974-8uRf0x550hsa_3G7yobtxxFDwcv35k3qE8tUwip8mUBLMAf5ME6qr5wa59n/exec";
   var SCAN_TOKEN      = "MAYAK5C2025";
 
   var video   = document.getElementById("video");
@@ -159,44 +159,44 @@
       var namaDecoded = decodeURIComponent(nama);
       setStatus("⏳ Mencatat " + namaDecoded + "...", "scanning");
 
-      // Kirim ke Apps Script via fetch (bukan google.script.run)
+      // Kirim ke Apps Script mode=api, kembalikan JSON
       var kirimUrl = APPS_SCRIPT_URL
-        + "?nis="   + encodeURIComponent(nis)
+        + "?mode=api"
+        + "&nis="   + encodeURIComponent(nis)
         + "&nama="  + encodeURIComponent(namaDecoded)
         + "&token=" + encodeURIComponent(SCAN_TOKEN)
         + "&ua=Scanner+Guru+GitHub";
 
       fetch(kirimUrl)
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-          // Deteksi hasil dari HTML yang dikembalikan
-          if (html.indexOf("Absensi Berhasil") > -1) {
+        .then(function(r) { return r.json(); })
+        .then(function(hasil) {
+          if (hasil.sukses) {
             cntHadir++;
             document.getElementById("cnt-hadir").textContent = cntHadir;
             tambahLog("hadir", "✅ Hadir", namaDecoded, nis);
             setStatus("✅ " + namaDecoded + " — Hadir tercatat!", "idle");
             bunyiBeep(true);
-          } else if (html.indexOf("Sudah Absen") > -1) {
+          } else if (hasil.tipe == "duplikat") {
             cntDuplikat++;
             document.getElementById("cnt-duplikat").textContent = cntDuplikat;
-            tambahLog("duplikat", "⚠️ Sudah absen", namaDecoded, nis);
+            tambahLog("duplikat", "⚠️ Sudah absen pukul " + hasil.waktu, namaDecoded, nis);
             setStatus("⚠️ " + namaDecoded + " sudah absen.", "idle");
             bunyiBeep(false);
           } else {
             cntGagal++;
             document.getElementById("cnt-gagal").textContent = cntGagal;
-            tambahLog("gagal", "❌ Gagal", namaDecoded, nis);
-            setStatus("❌ Gagal mencatat " + namaDecoded, "idle");
+            tambahLog("gagal", "❌ " + hasil.pesan, namaDecoded, nis);
+            setStatus("❌ " + hasil.pesan, "idle");
             bunyiBeep(false);
           }
         })
         .catch(function(err) {
           tambahLog("gagal", "Error: " + err.message, namaDecoded, nis);
-          setStatus("❌ Error koneksi", "idle");
+          setStatus("❌ Error koneksi: " + err.message, "idle");
           bunyiBeep(false);
         });
     } catch(e) {
-      tambahLog("gagal", "Bukan QR absensi", "—", "—"); bunyiBeep(false);
+      tambahLog("gagal", "Bukan QR absensi: " + e.message, "—", "—"); bunyiBeep(false);
     }
   }
 
