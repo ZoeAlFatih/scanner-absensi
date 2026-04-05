@@ -100,25 +100,49 @@
 </div>
 
 <script>
-  // ⬇️ GANTI 2 BARIS INI
+  // ============================================================
+  //  KONFIGURASI — ganti 2 baris ini
+  // ============================================================
   var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdP974-8uRf0x550hsa_3G7yobtxxFDwcv35k3qE8tUwip8mUBLMAf5ME6qr5wa59n/exec";
   var SCAN_TOKEN      = "MAYAK5C2025";
 
-  var video   = document.getElementById("video");
-  var canvas  = document.getElementById("canvas");
-  var ctx     = canvas.getContext("2d");
-  var lastQR  = "", lastQRTime = 0;
-  var sedangProses = false;
+  // ============================================================
+  //  VARIABEL STATE
+  // ============================================================
+  var video        = document.getElementById("video");
+  var canvas       = document.getElementById("canvas");
+  var ctx          = canvas.getContext("2d");
+  var lastQR       = "";
+  var lastQRTime   = 0;
+  var sedangProses = false;   // lock: cegah kirim ganda saat request belum selesai
+  var scanCache    = {};      // cache NIS yang sudah hadir hari ini (client-side)
   var cntHadir = 0, cntDuplikat = 0, cntGagal = 0;
 
+  // ============================================================
+  //  JAM REAL-TIME
+  // ============================================================
   function updateJam() {
     var now = new Date();
     var opt = { timeZone:"Asia/Jakarta" };
     document.getElementById("tgl").textContent = now.toLocaleDateString("id-ID", Object.assign({weekday:"long",day:"numeric",month:"long",year:"numeric"}, opt));
     document.getElementById("jam").textContent = now.toLocaleTimeString("id-ID", opt);
   }
-  setInterval(updateJam, 1000); updateJam();
+  setInterval(updateJam, 1000);
+  updateJam();
 
+  // Reset cache setiap pergantian hari (cek tiap menit)
+  var hariIni = new Date().toLocaleDateString("id-ID");
+  setInterval(function() {
+    var hariSekarang = new Date().toLocaleDateString("id-ID");
+    if (hariSekarang !== hariIni) {
+      hariIni = hariSekarang;
+      scanCache = {};
+    }
+  }, 60000);
+
+  // ============================================================
+  //  MULAI KAMERA
+  // ============================================================
   navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" } })
   .then(function(stream) {
     video.srcObject = stream;
@@ -127,10 +151,14 @@
     requestAnimationFrame(tick);
   })
   .catch(function(err) {
-    document.querySelector(".scanner-wrap").innerHTML = '<div class="no-cam">❌ Kamera tidak dapat diakses.<br>Pastikan browser diberi izin kamera.<br><br><small>' + err.message + '</small></div>';
+    document.querySelector(".scanner-wrap").innerHTML =
+      '<div class="no-cam">❌ Kamera tidak dapat diakses.<br>Pastikan browser diberi izin kamera.<br><br><small>' + err.message + '</small></div>';
     setStatus("⚠️ Kamera tidak tersedia", "idle");
   });
 
+  // ============================================================
+  //  LOOP DETEKSI QR
+  // ============================================================
   function tick() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
       canvas.width  = video.videoWidth;
@@ -140,8 +168,10 @@
       var qr = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts:"dontInvert" });
       if (qr && qr.data) {
         var now = Date.now();
+        // Syarat proses: tidak sedang proses DAN (QR beda ATAU sudah 15 detik)
         if (!sedangProses && (qr.data !== lastQR || now - lastQRTime > 15000)) {
-          lastQR = qr.data; lastQRTime = now;
+          lastQR     = qr.data;
+          lastQRTime = now;
           prosesQR(qr.data);
         }
       }
@@ -149,19 +179,38 @@
     requestAnimationFrame(tick);
   }
 
+  // ============================================================
+  //  PROSES HASIL SCAN
+  // ============================================================
   function prosesQR(data) {
-   sedangProses = true;
+    sedangProses = true;
     try {
       var url  = new URL(data);
       var nis  = url.searchParams.get("nis")  || "";
       var nama = url.searchParams.get("nama") || "";
+
       if (nis == "" || nama == "") {
-        tambahLog("gagal", "QR tidak dikenali", "—", "—"); bunyiBeep(false); return;
+        tambahLog("gagal", "QR tidak dikenali", "—", "—");
+        bunyiBeep(false);
+        sedangProses = false;
+        return;
       }
+
       var namaDecoded = decodeURIComponent(nama);
+
+      // Cek cache lokal dulu — kalau sudah hadir hari ini, langsung tampilkan duplikat
+      if (scanCache[nis]) {
+        cntDuplikat++;
+        document.getElementById("cnt-duplikat").textContent = cntDuplikat;
+        tambahLog("duplikat", "⚠️ Sudah absen (" + scanCache[nis] + ")", namaDecoded, nis);
+        setStatus("⚠️ " + namaDecoded + " sudah absen hari ini.", "idle");
+        bunyiBeep(false);
+        sedangProses = false;
+        return;
+      }
+
       setStatus("⏳ Mencatat " + namaDecoded + "...", "scanning");
 
-      // Kirim ke Apps Script mode=api, kembalikan JSON
       var kirimUrl = APPS_SCRIPT_URL
         + "?mode=api"
         + "&nis="   + encodeURIComponent(nis)
@@ -173,18 +222,25 @@
         .then(function(r) { return r.json(); })
         .then(function(hasil) {
           sedangProses = false;
+
           if (hasil.sukses) {
+            // Simpan ke cache lokal supaya scan ulang langsung diblokir
+            scanCache[nis] = hasil.waktu || "tadi";
             cntHadir++;
             document.getElementById("cnt-hadir").textContent = cntHadir;
             tambahLog("hadir", "✅ Hadir", namaDecoded, nis);
             setStatus("✅ " + namaDecoded + " — Hadir tercatat!", "idle");
             bunyiBeep(true);
+
           } else if (hasil.tipe == "duplikat") {
+            // Simpan ke cache supaya scan berikutnya tidak perlu ke server
+            scanCache[nis] = hasil.waktu || "tadi";
             cntDuplikat++;
             document.getElementById("cnt-duplikat").textContent = cntDuplikat;
             tambahLog("duplikat", "⚠️ Sudah absen pukul " + hasil.waktu, namaDecoded, nis);
             setStatus("⚠️ " + namaDecoded + " sudah absen.", "idle");
             bunyiBeep(false);
+
           } else {
             cntGagal++;
             document.getElementById("cnt-gagal").textContent = cntGagal;
@@ -195,19 +251,25 @@
         })
         .catch(function(err) {
           sedangProses = false;
-          tambahLog("gagal", "Error: " + err.message, namaDecoded, nis);
-          setStatus("❌ Error koneksi: " + err.message, "idle");
+          tambahLog("gagal", "Error koneksi: " + err.message, namaDecoded, nis);
+          setStatus("❌ Error koneksi — coba lagi", "idle");
           bunyiBeep(false);
         });
+
     } catch(e) {
       sedangProses = false;
-      tambahLog("gagal", "Bukan QR absensi: " + e.message, "—", "—"); bunyiBeep(false);
+      tambahLog("gagal", "Bukan QR absensi", "—", "—");
+      bunyiBeep(false);
     }
   }
 
+  // ============================================================
+  //  HELPER UI
+  // ============================================================
   function setStatus(teks, kelas) {
     var el = document.getElementById("status-text");
-    el.textContent = teks; el.className = kelas;
+    el.textContent = teks;
+    el.className   = kelas;
   }
 
   function tambahLog(tipe, keterangan, nama, nis) {
@@ -228,8 +290,10 @@
   }
 
   function bersihkanLog() {
-    document.getElementById("log-list").innerHTML = '<li style="color:#4b5563;font-size:13px;text-align:center;padding:20px">Belum ada scan...</li>';
+    document.getElementById("log-list").innerHTML =
+      '<li style="color:#4b5563;font-size:13px;text-align:center;padding:20px">Belum ada scan...</li>';
     cntHadir = 0; cntDuplikat = 0; cntGagal = 0;
+    scanCache = {};
     document.getElementById("cnt-hadir").textContent    = 0;
     document.getElementById("cnt-duplikat").textContent = 0;
     document.getElementById("cnt-gagal").textContent    = 0;
@@ -237,15 +301,17 @@
 
   function bunyiBeep(sukses) {
     try {
-      var ac = new (window.AudioContext || window.webkitAudioContext)();
-      var osc = ac.createOscillator();
+      var ac   = new (window.AudioContext || window.webkitAudioContext)();
+      var osc  = ac.createOscillator();
       var gain = ac.createGain();
-      osc.connect(gain); gain.connect(ac.destination);
+      osc.connect(gain);
+      gain.connect(ac.destination);
       osc.frequency.value = sukses ? 880 : 330;
       osc.type = "sine";
       gain.gain.setValueAtTime(0.3, ac.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.3);
-      osc.start(ac.currentTime); osc.stop(ac.currentTime + 0.3);
+      osc.start(ac.currentTime);
+      osc.stop(ac.currentTime + 0.3);
     } catch(e) {}
   }
 </script>
