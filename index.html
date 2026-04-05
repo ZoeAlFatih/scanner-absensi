@@ -108,6 +108,7 @@
   var canvas  = document.getElementById("canvas");
   var ctx     = canvas.getContext("2d");
   var lastQR  = "", lastQRTime = 0;
+  var sedangProses = false;
   var cntHadir = 0, cntDuplikat = 0, cntGagal = 0;
 
   function updateJam() {
@@ -139,7 +140,7 @@
       var qr = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts:"dontInvert" });
       if (qr && qr.data) {
         var now = Date.now();
-        if (qr.data !== lastQR || now - lastQRTime > 4000) {
+        if (!sedangProses && (qr.data !== lastQR || now - lastQRTime > 15000)) {
           lastQR = qr.data; lastQRTime = now;
           prosesQR(qr.data);
         }
@@ -149,6 +150,7 @@
   }
 
   function prosesQR(data) {
+   sedangProses = true;
     try {
       var url  = new URL(data);
       var nis  = url.searchParams.get("nis")  || "";
@@ -170,6 +172,7 @@
       fetch(kirimUrl)
         .then(function(r) { return r.json(); })
         .then(function(hasil) {
+          sedangProses = false;
           if (hasil.sukses) {
             cntHadir++;
             document.getElementById("cnt-hadir").textContent = cntHadir;
@@ -191,11 +194,13 @@
           }
         })
         .catch(function(err) {
+          sedangProses = false;
           tambahLog("gagal", "Error: " + err.message, namaDecoded, nis);
           setStatus("❌ Error koneksi: " + err.message, "idle");
           bunyiBeep(false);
         });
     } catch(e) {
+      sedangProses = false;
       tambahLog("gagal", "Bukan QR absensi: " + e.message, "—", "—"); bunyiBeep(false);
     }
   }
