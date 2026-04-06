@@ -23,16 +23,14 @@
   @keyframes scanline { 0%,100%{margin-top:-110px;opacity:0} 10%,90%{opacity:1} 50%{margin-top:110px} }
   .hint { position:absolute; bottom:18%; left:0; right:0; text-align:center; font-size:13px; color:#94a3b8; }
   .status-bar { background:#1e293b; padding:12px 16px; text-align:center; min-height:52px; display:flex; align-items:center; justify-content:center; border-top:1px solid #334155; }
-  .idle     { color:#64748b; font-size:14px; }
+  .idle { color:#64748b; font-size:14px; }
   .scanning { color:#22c55e; font-size:14px; animation:pulse 1s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
   .counter { display:flex; gap:10px; max-width:480px; margin:10px auto; padding:0 14px; }
   .counter-item { flex:1; background:#1e293b; border-radius:10px; padding:10px; text-align:center; border:1px solid #334155; }
   .counter-item .angka { font-size:26px; font-weight:700; }
   .counter-item .label { font-size:11px; color:#64748b; margin-top:2px; }
-  .c-hijau  { color:#22c55e; }
-  .c-kuning { color:#f59e0b; }
-  .c-merah  { color:#ef4444; }
+  .c-hijau { color:#22c55e; } .c-kuning { color:#f59e0b; } .c-merah { color:#ef4444; }
   .log-wrap { max-width:480px; margin:0 auto; padding:0 14px 20px; }
   .log-header { font-size:13px; color:#64748b; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
   .log-list { list-style:none; max-height:260px; overflow-y:auto; }
@@ -43,9 +41,8 @@
   .log-item.gagal    { background:#450a0a; color:#fecaca; }
   .log-item .waktu   { font-size:11px; color:#6b7280; margin-left:auto; white-space:nowrap; }
   .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-  .dot-hadir    { background:#22c55e; }
-  .dot-duplikat { background:#f59e0b; }
-  .dot-gagal    { background:#ef4444; }
+  .dot-hadir { background:#22c55e; } .dot-duplikat { background:#f59e0b; } .dot-gagal { background:#ef4444; }
+  .badge { display:inline-block; background:#1e40af; color:#bfdbfe; font-size:10px; padding:1px 7px; border-radius:20px; margin-left:5px; font-weight:600; vertical-align:middle; }
   .btn-clear { background:#1e293b; border:1px solid #334155; color:#94a3b8; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
   .btn-clear:hover { background:#334155; }
   .no-cam { padding:60px 20px; text-align:center; color:#64748b; font-size:14px; line-height:1.8; }
@@ -58,7 +55,7 @@
 <div class="header">
   <div>
     <div class="h1">📷 Scanner Absensi — Mode Guru</div>
-    <div class="sub">Arahkan kamera ke QR Code siswa</div>
+    <div class="sub" id="sub-sekolah">Arahkan kamera ke QR Code siswa</div>
   </div>
   <div style="text-align:right">
     <div style="font-size:11px;color:#64748b" id="tgl"></div>
@@ -104,49 +101,42 @@
   //  KONFIGURASI — ganti 2 baris ini
   // ============================================================
   var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdP974-8uRf0x550hsa_3G7yobtxxFDwcv35k3qE8tUwip8mUBLMAf5ME6qr5wa59n/exec";
-  var SCAN_TOKEN      = "MAYAK5C2025";
+  var SCAN_TOKEN      = "MAYAK2025";
 
   // ============================================================
-  //  VARIABEL STATE
+  //  STATE
   // ============================================================
   var video        = document.getElementById("video");
   var canvas       = document.getElementById("canvas");
   var ctx          = canvas.getContext("2d");
-  var lastQR       = "";
-  var lastQRTime   = 0;
-  var sedangProses = false;   // lock: cegah kirim ganda saat request belum selesai
-  var scanCache    = {};      // cache NIS yang sudah hadir hari ini (client-side)
+  var lastQR       = "", lastQRTime = 0;
+  var sedangProses = false;
+  var scanCache    = {};   // { nis: { kelas, waktu } }
   var cntHadir = 0, cntDuplikat = 0, cntGagal = 0;
 
   // ============================================================
-  //  JAM REAL-TIME
+  //  JAM
   // ============================================================
   function updateJam() {
-    var now = new Date();
-    var opt = { timeZone:"Asia/Jakarta" };
+    var now = new Date(), opt = { timeZone:"Asia/Jakarta" };
     document.getElementById("tgl").textContent = now.toLocaleDateString("id-ID", Object.assign({weekday:"long",day:"numeric",month:"long",year:"numeric"}, opt));
     document.getElementById("jam").textContent = now.toLocaleTimeString("id-ID", opt);
   }
-  setInterval(updateJam, 1000);
-  updateJam();
+  setInterval(updateJam, 1000); updateJam();
 
-  // Reset cache setiap pergantian hari (cek tiap menit)
-  var hariIni = new Date().toLocaleDateString("id-ID");
+  // Reset cache tengah malam
+  var _hari = new Date().toLocaleDateString("id-ID");
   setInterval(function() {
-    var hariSekarang = new Date().toLocaleDateString("id-ID");
-    if (hariSekarang !== hariIni) {
-      hariIni = hariSekarang;
-      scanCache = {};
-    }
+    var h = new Date().toLocaleDateString("id-ID");
+    if (h !== _hari) { _hari = h; scanCache = {}; }
   }, 60000);
 
   // ============================================================
-  //  MULAI KAMERA
+  //  KAMERA
   // ============================================================
   navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" } })
   .then(function(stream) {
-    video.srcObject = stream;
-    video.play();
+    video.srcObject = stream; video.play();
     setStatus("✅ Kamera aktif — arahkan ke QR Code siswa", "scanning");
     requestAnimationFrame(tick);
   })
@@ -161,17 +151,13 @@
   // ============================================================
   function tick() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0);
-      var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      var qr = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts:"dontInvert" });
+      var qr = jsQR(ctx.getImageData(0,0,canvas.width,canvas.height).data, canvas.width, canvas.height, {inversionAttempts:"dontInvert"});
       if (qr && qr.data) {
         var now = Date.now();
-        // Syarat proses: tidak sedang proses DAN (QR beda ATAU sudah 15 detik)
         if (!sedangProses && (qr.data !== lastQR || now - lastQRTime > 15000)) {
-          lastQR     = qr.data;
-          lastQRTime = now;
+          lastQR = qr.data; lastQRTime = now;
           prosesQR(qr.data);
         }
       }
@@ -180,7 +166,7 @@
   }
 
   // ============================================================
-  //  PROSES HASIL SCAN
+  //  PROSES QR
   // ============================================================
   function prosesQR(data) {
     sedangProses = true;
@@ -189,32 +175,28 @@
       var nis  = url.searchParams.get("nis")  || "";
       var nama = url.searchParams.get("nama") || "";
 
-      if (nis == "" || nama == "") {
-        tambahLog("gagal", "QR tidak dikenali", "—", "—");
-        bunyiBeep(false);
-        sedangProses = false;
-        return;
+      if (!nis || !nama) {
+        tambahLog("gagal","QR tidak dikenali","—","—","");
+        bunyiBeep(false); sedangProses = false; return;
       }
 
-      var namaDecoded = decodeURIComponent(nama);
+      var nd = decodeURIComponent(nama);
 
-      // Cek cache lokal dulu — kalau sudah hadir hari ini, langsung tampilkan duplikat
+      // Cek cache lokal dulu
       if (scanCache[nis]) {
         cntDuplikat++;
         document.getElementById("cnt-duplikat").textContent = cntDuplikat;
-        tambahLog("duplikat", "⚠️ Sudah absen (" + scanCache[nis] + ")", namaDecoded, nis);
-        setStatus("⚠️ " + namaDecoded + " sudah absen hari ini.", "idle");
-        bunyiBeep(false);
-        sedangProses = false;
-        return;
+        tambahLog("duplikat","⚠️ Sudah absen",nd,nis,scanCache[nis].kelas||"");
+        setStatus("⚠️ "+nd+" sudah absen hari ini.","idle");
+        bunyiBeep(false); sedangProses = false; return;
       }
 
-      setStatus("⏳ Mencatat " + namaDecoded + "...", "scanning");
+      setStatus("⏳ Mencatat "+nd+"...","scanning");
 
       var kirimUrl = APPS_SCRIPT_URL
         + "?mode=api"
         + "&nis="   + encodeURIComponent(nis)
-        + "&nama="  + encodeURIComponent(namaDecoded)
+        + "&nama="  + encodeURIComponent(nd)
         + "&token=" + encodeURIComponent(SCAN_TOKEN)
         + "&ua=Scanner+Guru+GitHub";
 
@@ -222,69 +204,64 @@
         .then(function(r) { return r.json(); })
         .then(function(hasil) {
           sedangProses = false;
-
           if (hasil.sukses) {
-            // Simpan ke cache lokal supaya scan ulang langsung diblokir
-            scanCache[nis] = hasil.waktu || "tadi";
+            scanCache[nis] = { kelas: hasil.kelas||"", waktu: hasil.waktu||"" };
             cntHadir++;
             document.getElementById("cnt-hadir").textContent = cntHadir;
-            tambahLog("hadir", "✅ Hadir", namaDecoded, nis);
-            setStatus("✅ " + namaDecoded + " — Hadir tercatat!", "idle");
+            tambahLog("hadir","✅ Hadir",nd,nis,hasil.kelas||"");
+            setStatus("✅ "+nd+(hasil.kelas?" ["+hasil.kelas+"]":"")+" — Hadir tercatat!","idle");
             bunyiBeep(true);
-
           } else if (hasil.tipe == "duplikat") {
-            // Simpan ke cache supaya scan berikutnya tidak perlu ke server
-            scanCache[nis] = hasil.waktu || "tadi";
+            scanCache[nis] = { kelas:"", waktu: hasil.waktu||"" };
             cntDuplikat++;
             document.getElementById("cnt-duplikat").textContent = cntDuplikat;
-            tambahLog("duplikat", "⚠️ Sudah absen pukul " + hasil.waktu, namaDecoded, nis);
-            setStatus("⚠️ " + namaDecoded + " sudah absen.", "idle");
+            tambahLog("duplikat","⚠️ Sudah absen pukul "+hasil.waktu,nd,nis,"");
+            setStatus("⚠️ "+nd+" sudah absen.","idle");
             bunyiBeep(false);
-
           } else {
             cntGagal++;
             document.getElementById("cnt-gagal").textContent = cntGagal;
-            tambahLog("gagal", "❌ " + hasil.pesan, namaDecoded, nis);
-            setStatus("❌ " + hasil.pesan, "idle");
+            tambahLog("gagal","❌ "+hasil.pesan,nd,nis,"");
+            setStatus("❌ "+hasil.pesan,"idle");
             bunyiBeep(false);
           }
         })
         .catch(function(err) {
           sedangProses = false;
-          tambahLog("gagal", "Error koneksi: " + err.message, namaDecoded, nis);
-          setStatus("❌ Error koneksi — coba lagi", "idle");
+          tambahLog("gagal","Error koneksi: "+err.message,nd,nis,"");
+          setStatus("❌ Error koneksi","idle");
           bunyiBeep(false);
         });
 
     } catch(e) {
       sedangProses = false;
-      tambahLog("gagal", "Bukan QR absensi", "—", "—");
+      tambahLog("gagal","Bukan QR absensi","—","—","");
       bunyiBeep(false);
     }
   }
 
   // ============================================================
-  //  HELPER UI
+  //  UI HELPER
   // ============================================================
   function setStatus(teks, kelas) {
     var el = document.getElementById("status-text");
-    el.textContent = teks;
-    el.className   = kelas;
+    el.textContent = teks; el.className = kelas;
   }
 
-  function tambahLog(tipe, keterangan, nama, nis) {
+  function tambahLog(tipe, ket, nama, nis, kelas) {
     var list = document.getElementById("log-list");
     if (list.children.length == 1 && list.children[0].style.textAlign == "center") list.innerHTML = "";
-    var now = new Date().toLocaleTimeString("id-ID", { timeZone:"Asia/Jakarta" });
-    var li  = document.createElement("li");
+    var now  = new Date().toLocaleTimeString("id-ID", { timeZone:"Asia/Jakarta" });
+    var li   = document.createElement("li");
     li.className = "log-item " + tipe;
+    var badge = kelas ? '<span class="badge">'+kelas+'</span>' : "";
     li.innerHTML =
-      '<div class="dot dot-' + tipe + '"></div>' +
+      '<div class="dot dot-'+tipe+'"></div>' +
       '<div>' +
-        '<div style="font-weight:600">' + nama + '</div>' +
-        '<div style="font-size:12px;opacity:.8">NIS: ' + nis + ' · ' + keterangan + '</div>' +
+        '<div style="font-weight:600">'+nama+badge+'</div>' +
+        '<div style="font-size:12px;opacity:.8">NIS: '+nis+' · '+ket+'</div>' +
       '</div>' +
-      '<div class="waktu">' + now + '</div>';
+      '<div class="waktu">'+now+'</div>';
     list.insertBefore(li, list.firstChild);
     if (list.children.length > 50) list.removeChild(list.lastChild);
   }
@@ -292,26 +269,21 @@
   function bersihkanLog() {
     document.getElementById("log-list").innerHTML =
       '<li style="color:#4b5563;font-size:13px;text-align:center;padding:20px">Belum ada scan...</li>';
-    cntHadir = 0; cntDuplikat = 0; cntGagal = 0;
-    scanCache = {};
-    document.getElementById("cnt-hadir").textContent    = 0;
-    document.getElementById("cnt-duplikat").textContent = 0;
-    document.getElementById("cnt-gagal").textContent    = 0;
+    cntHadir = 0; cntDuplikat = 0; cntGagal = 0; scanCache = {};
+    ["cnt-hadir","cnt-duplikat","cnt-gagal"].forEach(function(id){
+      document.getElementById(id).textContent = 0;
+    });
   }
 
-  function bunyiBeep(sukses) {
+  function bunyiBeep(ok) {
     try {
-      var ac   = new (window.AudioContext || window.webkitAudioContext)();
-      var osc  = ac.createOscillator();
-      var gain = ac.createGain();
-      osc.connect(gain);
-      gain.connect(ac.destination);
-      osc.frequency.value = sukses ? 880 : 330;
-      osc.type = "sine";
-      gain.gain.setValueAtTime(0.3, ac.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.3);
-      osc.start(ac.currentTime);
-      osc.stop(ac.currentTime + 0.3);
+      var ac = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ac.createOscillator(), g = ac.createGain();
+      osc.connect(g); g.connect(ac.destination);
+      osc.frequency.value = ok ? 880 : 330; osc.type = "sine";
+      g.gain.setValueAtTime(.3, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + .3);
+      osc.start(ac.currentTime); osc.stop(ac.currentTime + .3);
     } catch(e) {}
   }
 </script>
